@@ -165,6 +165,88 @@ def audit(repo):
             impact="Standards are advisory. They hold on a good day.",
             fix="Add a PostToolUse hook running your existing linter on every edited file. Usually a few lines, and it never forgets."))
 
+
+    # ---- Silent-failure checks. These are the ones worth publishing a tool for:
+    # each looks fine in a code review and does nothing at runtime.
+
+    # A. .claude/ in .gitignore. Extremely common and self-defeating: skills,
+    # agents and hooks are the shareable part. Ignored, every engineer rebuilds
+    # them privately and the team never converges.
+    gi = repo.read(".gitignore") or ""
+    # Only the whole tree counts. Ignoring .claude/settings.local.json is CORRECT
+    # — that is the per-developer file — and flagging it made the tool contradict
+    # its own remediation advice.
+    ignored = []
+    for line in gi.splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        if entry.rstrip("/") in (".claude", "**/.claude", "*/.claude"):
+            ignored.append(entry)
+    if ignored:
+        f.append(dict(
+            severity="high", area="sharing",
+            finding=f".gitignore excludes .claude ({', '.join(ignored[:3])}).",
+            impact="Skills, sub-agents and hooks are the part worth sharing. Ignored, each engineer rebuilds them privately, nothing is reviewed, and none of it survives someone leaving.",
+            fix="Commit .claude/. Keep only .claude/settings.local.json ignored — that is the per-developer file; settings.json is the shared one."))
+
+    # B. Hooks configured but the script is missing. The hook silently no-ops.
+    raw_settings = repo.read(".claude/settings.json")
+    if raw_settings:
+        try:
+            cfg = json.loads(raw_settings)
+        except (ValueError, TypeError):
+            cfg = None
+            f.append(dict(
+                severity="high", area="hooks",
+                finding=".claude/settings.json is not valid JSON.",
+                impact="An unparseable settings file means every hook in it is silently inactive. Nothing warns you.",
+                fix="Validate it: python3 -c \"import json;json.load(open('.claude/settings.json'))\""))
+        if cfg:
+            missing_scripts, hook_count = [], 0
+            for event, groups in (cfg.get("hooks") or {}).items():
+                for group in groups if isinstance(groups, list) else []:
+                    for h in (group.get("hooks") or []):
+                        cmd = str(h.get("command", ""))
+                        hook_count += 1
+                        m = re.search(r"([\w./$-]*\.claude/hooks/[\w.-]+)", cmd)
+                        if m:
+                            rel = re.sub(r"^\$?\{?CLAUDE_PROJECT_DIR\}?/", "", m.group(1))
+                            # NOT .lstrip("./") — that strips every leading '.' and
+                            # '/' character, turning ".claude/..." into "claude/..."
+                            # so every hook read as missing.
+                            if rel.startswith("./"):
+                                rel = rel[2:]
+                            if not repo.exists(rel):
+                                missing_scripts.append((event, rel))
+            have["hook_count"] = hook_count
+            if missing_scripts:
+                f.append(dict(
+                    severity="high", area="hooks",
+                    finding=f"{len(missing_scripts)} hook(s) point at a script that is not in the repo.",
+                    impact="A hook whose command is missing fails open. The rule it was meant to enforce is simply not enforced, and nothing reports it.",
+                    fix="Commit the referenced scripts, or remove the stale entries from settings.json.",
+                    examples=[f"{e}: {p}" for e, p in missing_scripts[:5]]))
+
+    # C. Skills missing a description. A skill without one is never selected —
+    # the description is what the model matches against.
+    skill_dirs = repo.listdir(".claude/skills")
+    undescribed = []
+    for d in skill_dirs[:25]:
+        body = repo.read(f".claude/skills/{d}/SKILL.md")
+        if body is None:
+            continue
+        head = body[:600]
+        if not re.search(r"^description:\s*\S", head, re.M):
+            undescribed.append(d)
+    if undescribed:
+        f.append(dict(
+            severity="high", area="skills",
+            finding=f"{len(undescribed)} skill(s) have no `description:` in their frontmatter.",
+            impact="The description is what the model matches a task against. Without it the skill is effectively invisible — it exists, it is committed, and it never fires.",
+            fix="Add a description that names the trigger, not the topic: 'Use when deploying to staging', not 'Deployment stuff'.",
+            examples=undescribed[:6]))
+
     # Git-layer enforcement. Checked SEPARATELY and reported as a STRENGTH, because
     # claiming a team "has no hooks" when they run Husky is the fastest way to be
     # contradicted in the first reply.

@@ -1,91 +1,106 @@
 # claude-audit
 
-Inspects a repo's Claude Code setup and reports what's missing, why it costs
-them, and what to build first.
+Finds what's silently broken in a repo's Claude Code setup.
 
-This is the deliverable behind the **$500 audit tier** in the consulting offer —
-and, run against a prospect's *public* repo, it's the attachment that turns a
-cold email from "can we talk?" into "here are three specific things, attached."
-
-## Usage
+Not a linter for your code — a linter for the layer your agent runs on. Most of
+what it finds looks fine in review and does nothing at runtime.
 
 ```console
-./audit.py ~/some/local/checkout      # local
-./audit.py owner/repo                 # public GitHub repo (needs `gh auth login`)
-./audit.py owner/repo --json          # machine-readable
-./audit.py <path> --generate DIR      # write real hooks/skills/agents into DIR
-./test.sh                             # regression checks for --generate
+$ ./audit.py your-org/your-repo
+
+# Claude Code audit — your-org/your-repo
+
+Instructions file: `CLAUDE.md` (~2,856 tokens, loaded every turn)
+Tooling present: none
+Tooling missing: skills, sub-agents, hooks, slash commands, shared settings, MCP servers
+
+## Findings: 4 high, 1 medium
+
+### 1. [HIGH] CLAUDE.md is ~2,856 tokens and loads on every single turn.
+**Why it costs you:** At ~2,856 tokens per turn, a 40-turn session pays ~114,240
+tokens just re-reading instructions — before any of your code is read.
 ```
 
-Zero dependencies. Python 3, plus `gh` for the GitHub path.
+Zero dependencies. Python 3, plus `gh` if you point it at a GitHub repo.
 
-## What it checks
+## Install
 
-| Check | Why it matters |
+```console
+git clone https://github.com/YOUR_USERNAME/claude-audit
+cd claude-audit && ./audit.py --help
+```
+
+## Use
+
+```console
+./audit.py .                      # this repo
+./audit.py ~/code/some-project    # a local checkout
+./audit.py owner/repo             # any public GitHub repo (needs `gh auth login`)
+./audit.py . --json               # machine-readable
+./audit.py . --generate ./out     # write the fixes, don't just name them
+./test.sh                         # the regression suite
+```
+
+## What it catches
+
+The interesting checks are the silent ones — configuration that is present,
+committed, reviewed, and inert.
+
+| Check | Why it's silent |
 | --- | --- |
-| `CLAUDE.md` / `AGENTS.md` present and its token size | The file loads on **every turn**. Over ~2k tokens it is a standing tax paid on turns that never use it. |
-| Imperative rules (ALWAYS / NEVER / MUST / CRITICAL …) | Each one is a hook candidate. A prose rule holds early in a session and slips late in one. |
-| Inline shell commands | Procedural knowledge billed as context every turn. Belongs in a skill, loaded on demand. |
-| `.claude/skills`, `agents`, `hooks`, `commands`, `settings.json`, `.mcp.json` | The actual tooling surface. Missing = "installed it and stopped." |
-| `.husky`, `.githooks`, `.pre-commit-config.yaml`, `lefthook.yml` | Reported as a **strength**, not a gap — see below. |
+| **`.claude/` in `.gitignore`** | Skills, agents and hooks are the shareable part. Ignored, every engineer rebuilds them privately and none of it survives someone leaving. |
+| **Hooks pointing at a missing script** | A hook whose command doesn't exist fails *open*. The rule isn't enforced and nothing reports it. |
+| **Skills with no `description:`** | The description is what the model matches a task against. Without one the skill is committed, present, and never fires. |
+| **Unparseable `settings.json`** | Every hook in it is inactive. No warning. |
+| **Rules written as prose** | `ALWAYS lint before committing` holds early in a session and slips late in one. |
+| **Instructions-file token cost** | It loads on *every* turn, including the ones that never use it. |
+| **Inline command lists** | Procedural knowledge billed as context on turns that never run it. Belongs in a skill. |
 
-## The git-hooks check exists to stop you being wrong
+It also reports **git-layer enforcement** (`.husky`, `.githooks`, pre-commit,
+lefthook) as a *strength*, not a gap — a team running Husky already believes in
+mechanical enforcement; it just stops before the agent.
 
-A team running Husky already believes in mechanical enforcement; their standards
-just stop at the git layer and never reach the agent. Telling them "you have no
-hooks" gets you contradicted in the first reply and ends the conversation.
+## `--generate` writes the fix
 
-So git-layer enforcement is detected separately and reported as a strength, and
-the framing becomes: *the instinct is right, it just stops before the agent.*
+```console
+./audit.py . --generate ./out
+```
 
-That check caught a real bug in this tool during development. `gh api contents/<dir>`
-returns an **array** for a directory and an **object** for a file; a jq of
-`.name // .[0].name` errors on the array, `gh` exits non-zero, and every directory
-silently reported as absent — producing a false "no git hooks" on a repo that
-ships `.githooks/`. Fixed by branching on `type == "array"`. Regression-checked
-in both directions: a repo with hooks reports them, a repo without still reports
-none.
+Emits a `lint-on-edit` hook wired to your actual linter (detected from
+`composer.json` / `package.json` / `Gemfile` / `pyproject.toml` / `mix.exs` /
+`go.mod`), a `forbid` hook built from literals your own instructions file
+declares forbidden, the `settings.json` that wires them, a reviewer sub-agent,
+and a skill seeded from the commands you documented inline.
 
-## Sample output
+All of it is a reviewed starting point, never a drop-in.
 
-`reports/` holds real reports generated against public repos. They are also the
-proof that the tool says something specific rather than generic — it quotes the
-target's own rules back to them.
+## A correct setup reports nothing
 
-## `--generate` — the setup tier
+That property is enforced by `test.sh`, because it's the one that decides whether
+the tool is worth running. Four of its cases are regressions of bugs this tool
+actually shipped:
 
-`--generate` turns findings into files, which is what makes the $2,500 setup tier
-repeatable delivery instead of bespoke work every engagement:
+- **A blocklist built from a guess.** The first extractor pulled the bare word
+  `Claude` out of *"Never use Claude watermark in commits"*. A PreToolUse hook
+  blocking every payload containing "Claude" blocks essentially every tool call.
+- **A hook that could never block.** The loop piped into `while read`, which runs
+  in a subshell, so `exit 2` left the subshell and the hook always returned 0. It
+  would have enforced nothing while looking correct in review.
+- **Flagging correct practice.** It reported `.claude/settings.local.json` being
+  gitignored as a problem — while its own remediation text said to keep exactly
+  that ignored.
+- **`.lstrip("./")`.** Strips every leading `.` and `/` *character*, so
+  `.claude/hooks/lint.sh` became `claude/hooks/lint.sh` and every configured hook
+  reported as missing.
 
-- `.claude/hooks/lint-on-edit.sh` — runs the project's real linter (detected from
-  its manifest: composer/npm/Gemfile/pyproject/mix/go.mod) on every edited file
-- `.claude/hooks/forbid.sh` — blocks literals the project declared FORBIDDEN
-- `.claude/settings.json` — wires whichever hooks were produced
-- `.claude/agents/reviewer.md` — the reviewer sub-agent every audited repo lacked
-- `.claude/skills/<stack>-workflows/SKILL.md` — seeded from commands documented inline
+None of the four were visible reading the code. All four came from reading the
+output. That's the habit the tool is trying to encode.
 
-Everything is a starting point a human reviews before committing, not a drop-in.
+## Contributing
 
-### Two bugs this shipped with, and why `test.sh` exists
+New checks are welcome, with one rule: a check must not fire on a correct setup.
+Add the passing case to `test.sh` alongside the failing one.
 
-**A blocklist built from a guess.** The first extractor pulled the bare word
-`Claude` out of *"Never use Claude watermark in commits"* and `bold` out of
-*"Never use bold text as headings"*. A PreToolUse hook blocking every payload
-containing "Claude" blocks essentially every tool call. Now only quoted literals
-carrying a separator and >= 8 chars are activated — `Co-Authored-By` qualifies,
-`Claude` does not — and everything rejected is written into the file as a
-commented candidate for a human to promote deliberately.
+## License
 
-**A hook that could never block.** The loop was `printf ... | while read`, which
-runs in a subshell, so `exit 2` left the subshell and the hook always returned 0.
-It would have silently enforced nothing. Now it is a plain `for` over an IFS
-split, and `test.sh` asserts an actual block happens.
-
-Both are regression-tested. Neither was visible from reading the generator; both
-turned up from reading its output.
-
-## Roadmap when a paying client uses it
-
-- Read actual token spend from a session transcript rather than estimating from file size
-- Diff against a reference setup to score maturity
-- Generate the skill body from real command history, not just the documented list
+MIT
