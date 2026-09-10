@@ -13,6 +13,8 @@ cold email from "can we talk?" into "here are three specific things, attached."
 ./audit.py ~/some/local/checkout      # local
 ./audit.py owner/repo                 # public GitHub repo (needs `gh auth login`)
 ./audit.py owner/repo --json          # machine-readable
+./audit.py <path> --generate DIR      # write real hooks/skills/agents into DIR
+./test.sh                             # regression checks for --generate
 ```
 
 Zero dependencies. Python 3, plus `gh` for the GitHub path.
@@ -50,8 +52,40 @@ none.
 proof that the tool says something specific rather than generic — it quotes the
 target's own rules back to them.
 
+## `--generate` — the setup tier
+
+`--generate` turns findings into files, which is what makes the $2,500 setup tier
+repeatable delivery instead of bespoke work every engagement:
+
+- `.claude/hooks/lint-on-edit.sh` — runs the project's real linter (detected from
+  its manifest: composer/npm/Gemfile/pyproject/mix/go.mod) on every edited file
+- `.claude/hooks/forbid.sh` — blocks literals the project declared FORBIDDEN
+- `.claude/settings.json` — wires whichever hooks were produced
+- `.claude/agents/reviewer.md` — the reviewer sub-agent every audited repo lacked
+- `.claude/skills/<stack>-workflows/SKILL.md` — seeded from commands documented inline
+
+Everything is a starting point a human reviews before committing, not a drop-in.
+
+### Two bugs this shipped with, and why `test.sh` exists
+
+**A blocklist built from a guess.** The first extractor pulled the bare word
+`Claude` out of *"Never use Claude watermark in commits"* and `bold` out of
+*"Never use bold text as headings"*. A PreToolUse hook blocking every payload
+containing "Claude" blocks essentially every tool call. Now only quoted literals
+carrying a separator and >= 8 chars are activated — `Co-Authored-By` qualifies,
+`Claude` does not — and everything rejected is written into the file as a
+commented candidate for a human to promote deliberately.
+
+**A hook that could never block.** The loop was `printf ... | while read`, which
+runs in a subshell, so `exit 2` left the subshell and the hook always returned 0.
+It would have silently enforced nothing. Now it is a plain `for` over an IFS
+split, and `test.sh` asserts an actual block happens.
+
+Both are regression-tested. Neither was visible from reading the generator; both
+turned up from reading its output.
+
 ## Roadmap when a paying client uses it
 
 - Read actual token spend from a session transcript rather than estimating from file size
-- Generate the hook files, not just the recommendation
 - Diff against a reference setup to score maturity
+- Generate the skill body from real command history, not just the documented list
