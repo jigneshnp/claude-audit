@@ -43,6 +43,27 @@ echo '{"content":"ask Claude about this bold heading"}' | "$HOOK" >/dev/null 2>&
     echo "FAIL: hook false-positived on 'Claude'/'bold'"; fail=1
 }
 
+# REGRESSION 2B: LINT_HOOK originally used a non-raw Python triple-quoted string,
+# turning `\1` in the sed backreference into ASCII 0x01 (SOH) so FILE evaluated
+# to "\x01", `[ -f "$FILE" ] || exit 0` always exited 0, and lint-on-edit.sh
+# silently passed on every single file edit.
+LINT="$TMP/out/.claude/hooks/lint-on-edit.sh"
+[ -x "$LINT" ] || { echo "FAIL: lint-on-edit.sh not generated or not executable"; exit 1; }
+grep -q '\\1/p' "$LINT" || { echo "FAIL: lint-on-edit.sh missing literal \\1 sed backreference (octal 0x01 bug)"; fail=1; }
+
+# Verify sed extraction inside lint-on-edit.sh actually resolves the edited file path:
+EXTRACTED=$(printf '%s' "{\"tool_input\":{\"file_path\":\"$FIX/composer.json\"}}" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+[ "$EXTRACTED" = "$FIX/composer.json" ] || { echo "FAIL: sed file_path extraction failed"; fail=1; }
+
+# If a mock failing linter is in place, lint-on-edit.sh must exit 2 (not 0!):
+mkdir -p "$TMP/out/vendor/bin"
+printf '#!/bin/sh\necho "PHP syntax error" >&2\nexit 1\n' > "$TMP/out/vendor/bin/pint"
+chmod +x "$TMP/out/vendor/bin/pint"
+printf '<?php broken' > "$TMP/out/bad.php"
+(cd "$TMP/out" && echo '{"tool_input":{"file_path":"bad.php"}}' | ./.claude/hooks/lint-on-edit.sh >/dev/null 2>&1) && {
+    echo "FAIL: lint-on-edit.sh silently exited 0 on a failing file"; fail=1
+}
+
 # The reviewer agent is the gap every audited repo had; always emitted.
 [ -f "$TMP/out/.claude/agents/reviewer.md" ] || { echo "FAIL: reviewer agent missing"; fail=1; }
 

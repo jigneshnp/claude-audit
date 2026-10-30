@@ -26,7 +26,7 @@ Zero dependencies. Python 3, plus `gh` if you point it at a GitHub repo.
 ## Install
 
 ```console
-git clone https://github.com/YOUR_USERNAME/claude-audit
+git clone https://github.com/jigneshnp/claude-audit
 cd claude-audit && ./audit.py --help
 ```
 
@@ -100,6 +100,14 @@ output. That's the habit the tool is trying to encode.
 
 New checks are welcome, with one rule: a check must not fire on a correct setup.
 Add the passing case to `test.sh` alongside the failing one.
+
+## Done-For-You Repo Audit + Drop-In Fix PR ($99 / $499)
+
+Want a full static + live agent behavior audit, a slimmed `<500 token` `CLAUDE.md` tailored to your stack, and a ready-to-merge PR wiring pre-commit/CI guardrails in 24 hours?
+
+- **Live Storefront & Sample Deliverable**: [https://jigneshnp.github.io/claude-audit/](https://jigneshnp.github.io/claude-audit/)
+- **Single-Repo Audit + Fix PR ($99 — 24h turnaround)**: [Request Audit / Instant Invoice](mailto:jigneshnpatel97@gmail.com?subject=Order%3A%2024-Hr%20Claude%20Code%20Repo%20Audit%20%28%2499%29&body=Hi%20Jignesh%2C%0A%0AI%27d%20like%20to%20order%20the%20%2499%2024-Hour%20Claude%20Code%20Repo%20Audit%20%2B%20Fix%20PR.%0A%0ARepo%20URL%3A%20)
+- **Agency / Team Multi-Repo Package ($499 — up to 5 repos)**: [Book Team Package](mailto:jigneshnpatel97@gmail.com?subject=Order%3A%20Team%20Claude%20Code%20Audit%20Package%20%28%24499%29&body=Hi%20Jignesh%2C%0A%0AWe%27d%20like%20to%20book%20the%20%24499%20Team%20Multi-Repo%20Package.%0A%0AOrg%20%2F%20Repos%3A%20)
 
 ## License
 

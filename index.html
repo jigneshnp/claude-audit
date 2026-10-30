@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>claude-audit — Fix What's Silently Broken in Your Repo's Claude Code Setup</title>
+<style>
+  :root {
+    --bg: #faf9f6;
+    --card: #ffffff;
+    --ink: #111827;
+    --muted: #4b5563;
+    --border: #e5e7eb;
+    --accent: #d97706;
+    --accent-dark: #b45309;
+    --code-bg: #0f172a;
+    --code-fg: #e2e8f0;
+    --high: #dc2626;
+    --ok: #16a34a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.55;
+    padding: 0 16px 64px;
+  }
+  .container {
+    max-width: 880px;
+    margin: 0 auto;
+  }
+  header {
+    padding: 36px 0 28px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 36px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .brand {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-weight: 700;
+    font-size: 1.15rem;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .badge {
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: #fef3c7;
+    color: #92400e;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid #fde68a;
+  }
+  h1 {
+    font-size: 2.25rem;
+    line-height: 1.18;
+    letter-spacing: -0.02em;
+    margin-bottom: 16px;
+  }
+  .lead {
+    font-size: 1.15rem;
+    color: var(--muted);
+    max-width: 720px;
+    margin-bottom: 28px;
+  }
+  .cta-row {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 40px;
+  }
+  .btn-primary {
+    display: inline-block;
+    background: var(--ink);
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 0.98rem;
+    padding: 13px 22px;
+    border-radius: 8px;
+    text-decoration: none;
+    transition: opacity 0.15s;
+  }
+  .btn-primary:hover { opacity: 0.9; }
+  .btn-secondary {
+    display: inline-block;
+    background: var(--card);
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 0.98rem;
+    padding: 13px 22px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    text-decoration: none;
+  }
+  .terminal {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.86rem;
+    line-height: 1.5;
+    padding: 22px;
+    border-radius: 10px;
+    overflow-x: auto;
+    margin-bottom: 44px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12);
+  }
+  .terminal .cmd { color: #38bdf8; }
+  .terminal .high { color: #f87171; font-weight: 700; }
+  .terminal .med { color: #fbbf24; font-weight: 700; }
+  .terminal .dim { color: #94a3b8; }
+  h2 {
+    font-size: 1.45rem;
+    margin-bottom: 16px;
+    letter-spacing: -0.01em;
+  }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 20px;
+    margin-bottom: 44px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+  }
+  .card h3 {
+    font-size: 1.08rem;
+    margin-bottom: 8px;
+  }
+  .card p {
+    font-size: 0.94rem;
+    color: var(--muted);
+  }
+  .pricing-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 22px;
+    margin-bottom: 48px;
+  }
+  .price-card {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .price-card.featured {
+    border-color: var(--ink);
+    box-shadow: 0 8px 20px -4px rgba(0,0,0,0.08);
+  }
+  .price-tag {
+    font-size: 2rem;
+    font-weight: 800;
+    margin: 10px 0 6px;
+  }
+  .price-sub {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 18px;
+  }
+  ul.features {
+    list-style: none;
+    margin-bottom: 24px;
+  }
+  ul.features li {
+    font-size: 0.92rem;
+    margin-bottom: 9px;
+    padding-left: 20px;
+    position: relative;
+  }
+  ul.features li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: var(--ok);
+    font-weight: 700;
+  }
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+    font-size: 0.88rem;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="#" class="brand">claude-audit</a>
+    <span class="badge">24-Hour Turnaround · Ready-to-Merge PR Included</span>
+  </header>
+
+  <h1>Find what's silently broken in your repo's Claude Code setup.</h1>
+  <p class="lead">
+    Not a linter for your application code—a static analyzer and remediation generator for the layer your AI coding agents run on. Most configuration bugs look fine in code review and silently fail open at runtime.
+  </p>
+
+  <div class="cta-row">
+    <a href="https://buy.stripe.com/YOUR_STRIPE_LINK_HERE" data-stripe-checkout="fast-track" class="btn-primary">
+      Order 24-Hr Repo Audit + Fix PR — $99
+    </a>
+    <a href="mailto:jigneshnpatel97@gmail.com?subject=Claude%20Code%20Repo%20Audit%20Request&body=Hi%20Jignesh%2C%0A%0AHere%20is%20our%20GitHub%20repo%20URL%3A%20" class="btn-secondary">
+      Send Repo URL for Free 3-Finding Preview
+    </a>
+  </div>
+
+  <div class="terminal">
+<pre><span class="cmd">$ ./audit.py agency/production-repo</span>
+
+# Claude Code Audit — agency/production-repo
+Instructions file: `CLAUDE.md` (~2,856 tokens, billed on every single turn)
+Tooling present:   none
+Tooling missing:   skills, sub-agents, hooks, shared settings.json
+
+<span class="high">### 1. [HIGH] .gitignore excludes `.claude/`</span>
+Why it costs you: Skills, sub-agents, and hooks are the shareable layer. Ignored, every engineer
+rebuilds them privately and nothing survives turnover. Keep only `.claude/settings.local.json` ignored.
+
+<span class="high">### 2. [HIGH] 14 rules written as prose ("ALWAYS lint", "NEVER commit Co-Authored-By") with zero hooks</span>
+Why it costs you: Prose instructions hold on turn 3 and slip on turn 35. Converted to PreToolUse and
+PostToolUse hooks in `.claude/settings.json` so violations fail mechanically.
+
+<span class="high">### 3. [HIGH] `CLAUDE.md` is ~2,856 tokens (~114,240 tokens per 40-turn session)</span>
+Why it costs you: Procedural shell commands are billed on every turn, including turns that never run them.
+Moved repeatable workflows into `.claude/skills/` with proper frontmatter `description:` triggers.
+
+<span class="cmd">$ ./audit.py agency/production-repo --generate ./pr-ready-fix</span>
+<span class="dim">Generated: .claude/settings.json, .claude/hooks/lint-on-edit.sh, .claude/hooks/forbid.sh,
+           .claude/agents/reviewer.md, .claude/skills/project-commands/SKILL.md</span></pre>
+  </div>
+
+  <h2>What Silent Failures We Catch &amp; Fix</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h3>1. Hooks Pointing at Missing Scripts</h3>
+      <p>When a hook command in <code>.claude/settings.json</code> references a missing path or uses a subshell <code>while read</code> loop, it fails open with exit code 0. The rule you thought was enforced is completely inactive.</p>
+    </div>
+    <div class="card">
+      <h3>2. Skills Missing Frontmatter Triggers</h3>
+      <p>Claude matches tasks to skills using the YAML <code>description:</code> field. Skills committed without a trigger-phrased description never fire in real sessions.</p>
+    </div>
+    <div class="card">
+      <h3>3. Always-On Context Bloat in <code>CLAUDE.md</code></h3>
+      <p>A 2,500+ token <code>CLAUDE.md</code> burns 100,000+ input tokens per 40-turn session before a single source file is read. We slim always-on context under 500 tokens and extract workflows into on-demand skills.</p>
+    </div>
+    <div class="card">
+      <h3>4. Mechanical PreToolUse / PostToolUse Enforcement</h3>
+      <p>We convert your prose rules ("Always run Pint/ESLint/pytest", "Never include watermark") into tested shell hooks wired to your actual repo linter and verified by an automated regression suite.</p>
+    </div>
+  </div>
+
+  <h2>Simple, Fixed-Scope Pricing</h2>
+  <div class="pricing-grid">
+    <div class="price-card featured">
+      <div>
+        <span class="badge">Fastest ROI · Delivered in 24 Hours</span>
+        <h3>Single-Repo Audit + Drop-In Fix PR</h3>
+        <div class="price-tag">$99</div>
+        <div class="price-sub">One-time flat fee · No recurring subscription</div>
+        <ul class="features">
+          <li>Full written audit of your <code>CLAUDE.md</code> / <code>AGENTS.md</code> &amp; <code>.claude/</code> directory</li>
+          <li>Token-cost breakdown &amp; slimmed <code>&lt;500 token</code> root instructions file</li>
+          <li>Custom <code>lint-on-edit.sh</code> &amp; <code>forbid.sh</code> hooks wired in <code>.claude/settings.json</code></li>
+          <li>Independent <code>reviewer.md</code> sub-agent + extracted on-demand skills</li>
+          <li>Runnable regression test script (<code>test.sh</code>) proving every hook blocks bad payloads</li>
+        </ul>
+      </div>
+      <a href="https://buy.stripe.com/YOUR_STRIPE_LINK_HERE" data-stripe-checkout="fast-track" class="btn-primary" style="text-align:center;">
+        Pay via Stripe &amp; Start Audit ($99)
+      </a>
+    </div>
+
+    <div class="price-card">
+      <div>
+        <h3>Agency / Team Multi-Repo Package</h3>
+        <div class="price-tag">$499</div>
+        <div class="price-sub">Up to 5 repositories + team onboarding</div>
+        <ul class="features">
+          <li>Complete audit &amp; remediation PRs across up to 5 repositories</li>
+          <li>Shared agency-wide <code>.claude/</code> starter template for new client projects</li>
+          <li>Custom MCP server &amp; CI/CD hook integration tailored to your stack (Laravel, Next.js, Python, Rails, Go)</li>
+          <li>30-minute live engineering walkthrough &amp; Q&amp;A</li>
+          <li>14 days of async follow-up support</li>
+        </ul>
+      </div>
+      <a href="https://buy.stripe.com/YOUR_STRIPE_LINK_HERE" data-stripe-checkout="team-tier" class="btn-secondary" style="text-align:center;">
+        Book Team Package via Stripe ($499)
+      </a>
+    </div>
+  </div>
+
+  <footer>
+    <div>Built by <strong>Jignesh Patel</strong> · <a href="mailto:jigneshnpatel97@gmail.com">jigneshnpatel97@gmail.com</a> · <a href="https://github.com/jigneshnp/claude-audit">github.com/jigneshnp/claude-audit</a> · <a href="https://www.linkedin.com/in/jigpat30/">LinkedIn</a></div>
+    <div>After checkout, email your repo URL (or attach your <code>CLAUDE.md</code> + <code>.claude/</code> zip) to <a href="mailto:jigneshnpatel97@gmail.com">jigneshnpatel97@gmail.com</a>.</div>
+  </footer>
+</div>
+<script>
+  document.querySelectorAll('a[data-stripe-checkout]').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      var href = btn.getAttribute('href') || '';
+      if (href.indexOf('YOUR_STRIPE_LINK_HERE') !== -1) {
+        e.preventDefault();
+        var tier = btn.getAttribute('data-stripe-checkout') === 'team-tier'
+          ? 'Team Multi-Repo Package ($499)'
+          : 'Single-Repo Audit + Fix PR ($99)';
+        var subj = encodeURIComponent('Order: ' + tier + ' — claude-audit');
+        var body = encodeURIComponent('Hi Jignesh,\n\nI would like to order the ' + tier + '.\n\nGitHub Repo URL(s): \nPreferred payment method (Stripe Invoice / Card): \n');
+        window.location.href = 'mailto:jigneshnpatel97@gmail.com?subject=' + subj + '&body=' + body;
+      }
+    });
+  });
+</script>
+</body>
+</html>

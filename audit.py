@@ -30,7 +30,7 @@ IMPERATIVE = re.compile(
 )
 # A run of shell commands in prose is repeated setup knowledge — that is a skill,
 # loaded on demand, not context paid for on every single turn.
-CMD_LINE = re.compile(r"^\s*(?:\$|>)?\s*(npm|npx|yarn|pnpm|bun|make|docker|ddev|php|python|pytest|go|cargo|rails|bundle|composer|terraform|kubectl)\s+\S")
+CMD_LINE = re.compile(r"^\s*(?:[-*>]|\d+\.)?\s*`?(?:\$|>)?\s*(npm|npx|yarn|pnpm|bun|make|docker|ddev|php|python|pytest|go|cargo|rails|bundle|composer|mix|iex|gulp|vite|terraform|kubectl)\s+\S")
 
 
 def sh(args):
@@ -301,15 +301,15 @@ def render(target, findings, have):
 
 # Detected by manifest file. Each entry: (linter command, what it lints).
 STACKS = [
-    ("composer.json", "vendor/bin/phpcs --standard=phpcs.xml", "PHP"),
-    ("package.json", "npx --no-install eslint", "JavaScript/TypeScript"),
-    ("Gemfile", "bundle exec rubocop", "Ruby"),
-    ("pyproject.toml", "ruff check", "Python"),
-    ("mix.exs", "mix format --check-formatted", "Elixir"),
-    ("go.mod", "gofmt -l", "Go"),
+    ("composer.json", 'if [ -x vendor/bin/pint ]; then vendor/bin/pint --test "$FILE"; elif [ -x vendor/bin/phpcs ] && [ -f phpcs.xml ]; then vendor/bin/phpcs --standard=phpcs.xml "$FILE"; else php -l "$FILE"; fi', "PHP"),
+    ("package.json", 'npx --no-install eslint "$FILE"', "JavaScript/TypeScript"),
+    ("Gemfile", 'bundle exec rubocop "$FILE"', "Ruby"),
+    ("pyproject.toml", 'ruff check "$FILE"', "Python"),
+    ("mix.exs", 'mix format --check-formatted "$FILE"', "Elixir"),
+    ("go.mod", 'UNFMT=$(gofmt -l "$FILE") && [ -z "$UNFMT" ]', "Go"),
 ]
 
-LINT_HOOK = """#!/bin/sh
+LINT_HOOK = r"""#!/bin/sh
 # Runs {lang} lint on every file Claude edits, immediately after the edit.
 #
 # Replaces the prose rule "always lint before committing" with something that
@@ -331,11 +331,30 @@ case "$FILE" in
     *) exit 0 ;;
 esac
 
-OUT=$({linter} "$FILE" 2>&1) || {{
+OUT=$({linter} 2>&1) || {{
     echo "Lint failed for $FILE:" >&2
     echo "$OUT" >&2
     exit 2
 }}
+exit 0
+"""
+
+DDEV_GUARD_HOOK = r"""#!/bin/sh
+# PreToolUse guard for DDEV repositories: blocks bare host php/composer/craft
+# commands in Bash tool calls so Claude always prefixes with `ddev `.
+set -u
+
+PAYLOAD=$(cat)
+CMD=$(printf '%s' "$PAYLOAD" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+
+[ -n "$CMD" ] || exit 0
+
+case "$CMD" in
+    php\ *|composer\ *|craft\ *|./craft\ *)
+        echo "Blocked: do not run '$CMD' directly on the host. Prefix with 'ddev ' (e.g. 'ddev $CMD')." >&2
+        exit 2
+        ;;
+esac
 exit 0
 """
 
@@ -430,6 +449,12 @@ these must run in, what "done" looks like.
 def detect_stack(repo):
     for manifest, linter, lang in STACKS:
         if repo.exists(manifest):
+            if manifest == "composer.json":
+                comp_txt = (repo.read("composer.json") or "").lower()
+                if "laravel/pint" in comp_txt:
+                    return 'if [ -x vendor/bin/pint ]; then vendor/bin/pint --test "$FILE"; else php -l "$FILE"; fi', "PHP"
+                if "squizlabs/php_codesniffer" in comp_txt or repo.exists("phpcs.xml"):
+                    return 'if [ -x vendor/bin/phpcs ] && [ -f phpcs.xml ]; then vendor/bin/phpcs --standard=phpcs.xml "$FILE"; else php -l "$FILE"; fi', "PHP"
             return linter, lang
     return None, None
 
@@ -478,13 +503,17 @@ def generate(repo, findings, have, outdir):
     # and length >= 8. "Co-Authored-By" passes; "Claude" and "bold" do not.
     # Everything rejected is emitted as a commented candidate for a human to
     # promote deliberately. Never auto-generate a block on a guess.
+    inst_txt = repo.read(have.get("instructions_file") or "CLAUDE.md") or ""
     forbidden, candidates = [], []
+    has_ddev_rule = bool("ddev " in inst_txt.lower() or repo.exists(".ddev/config.yaml"))
     literal_re = re.compile(r"[\"'`]([^\"'`]{3,60})[\"'`]")
     negative_re = re.compile(r"\b(never|forbidden|do not|don't)\b", re.I)
     for f in findings:
         if f["area"] != "hooks":
             continue
         for rule in f.get("examples", []):
+            if "ddev" in rule.lower() or "directly on the host" in rule.lower():
+                has_ddev_rule = True
             if not negative_re.search(rule):
                 continue
             for lit in literal_re.findall(rule):
@@ -508,6 +537,9 @@ def generate(repo, findings, have, outdir):
                                  review_block=review),
               executable=True)
 
+    if has_ddev_rule:
+        write(".claude/hooks/ddev-guard.sh", DDEV_GUARD_HOOK, executable=True)
+
     # 3. settings.json wiring whatever hooks we produced.
     hooks_cfg = {}
     if linter:
@@ -515,22 +547,33 @@ def generate(repo, findings, have, outdir):
             "matcher": "Write|Edit",
             "hooks": [{"type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/lint-on-edit.sh", "timeout": 30}],
         }]
+    pre_hooks = []
     if forbidden:
-        hooks_cfg["PreToolUse"] = [{
+        pre_hooks.append({
             "matcher": "Write|Edit|Bash",
             "hooks": [{"type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/forbid.sh", "timeout": 10}],
-        }]
+        })
+    if has_ddev_rule:
+        pre_hooks.append({
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/ddev-guard.sh", "timeout": 10}],
+        })
+    if pre_hooks:
+        hooks_cfg["PreToolUse"] = pre_hooks
     if hooks_cfg:
         write(".claude/settings.json", json.dumps({"hooks": hooks_cfg}, indent=2) + "\n")
 
     # 4. reviewer sub-agent — the one every audited repo was missing.
     write(".claude/agents/reviewer.md", REVIEWER_AGENT)
 
-    # 5. a skill seeded from the commands documented inline.
+    # 5. a skill seeded from the commands documented inline (or fallback when skills are missing).
     cmds = []
     for f in findings:
         if f["area"] == "skills" and f.get("examples"):
-            cmds = [c.lstrip("-*$> ").strip() for c in f["examples"]]
+            cmds = [c.lstrip("-*$> `").rstrip("`").strip() for c in f["examples"]]
+    if not cmds and "skills" in have.get("missing", []):
+        inline_cmds = [l.strip().lstrip("-*$> `").rstrip("`").strip() for l in inst_txt.splitlines() if CMD_LINE.match(l)]
+        cmds = inline_cmds[:8] if inline_cmds else ([linter] if linter else [])
     if cmds:
         name = slugify(f"{lang or 'project'}-workflows")
         write(f".claude/skills/{name}/SKILL.md",
